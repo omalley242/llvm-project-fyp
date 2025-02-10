@@ -1604,8 +1604,12 @@ bool LoopVectorizationLegality::canVectorizeLoopNestCFG(
   return Result;
 }
 
+// ==FYP== Early Exit Check
 bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
+  // ==FYP== Get Nodes that return to the loop header
   BasicBlock *LatchBB = TheLoop->getLoopLatch();
+
+  // ==FYP== If no nodes return to the header we cannot vectorise (may be handled by the SLP Vectorizer)
   if (!LatchBB) {
     reportVectorizationFailure("Loop does not have a latch",
                                "Cannot vectorize early exit loop",
@@ -1613,6 +1617,8 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
     return false;
   }
 
+  // ==FYP== if there are any reduction variables or FixedOrderRecurrences Do Not Vectorize
+  // ==FYP== A reduction variable / Fixed Order Recurrance is a form of cross-iteration dependacy
   if (Reductions.size() || FixedOrderRecurrences.size()) {
     reportVectorizationFailure(
         "Found reductions or recurrences in early-exit loop",
@@ -1621,6 +1627,8 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
     return false;
   }
 
+  // ==FYP== Get a list of all exiting blocks 
+  // ==FYP (blocks that have control flow to reach a block outside the loop)
   SmallVector<BasicBlock *, 8> ExitingBlocks;
   TheLoop->getExitingBlocks(ExitingBlocks);
 
@@ -1628,9 +1636,19 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
   SmallVector<const SCEVPredicate *, 4> Predicates;
   std::optional<std::pair<BasicBlock *, BasicBlock *>> SingleUncountableEdge;
   for (BasicBlock *BB : ExitingBlocks) {
+    // ==FYP== Calculate the amount of times the backedge is taken before this exit block within the loop
+    // ==FYP== Using a set of predicates (assumptions) about the scalar evolution 
     const SCEV *EC =
         PSE.getSE()->getPredicatedExitCount(TheLoop, BB, &Predicates);
+
+    // ==FYP== If the amount of iterations cannot be computed add this block to the UncountableExitingBlocks
     if (isa<SCEVCouldNotCompute>(EC)) {
+<<<<<<< HEAD
+=======
+      UncountableExitingBlocks.push_back(BB);
+
+      // ==FYP== check if the currently tested exiting block has two successors if it does not have 2
+>>>>>>> 86d90f177cd0 (feat: adding extra comments to Loop Vectorization Legality)
       SmallVector<BasicBlock *, 2> Succs(successors(BB));
       if (Succs.size() != 2) {
         reportVectorizationFailure(
@@ -1640,6 +1658,8 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
         return false;
       }
 
+      // ==FYP== Look at the exit blocks of the exiting block currently being reviewed one of them must 
+      // ==FYP== not be within the loop for it to be exiting, add the Exit block to the UncountableExitBlocks list
       BasicBlock *ExitBlock;
       if (!TheLoop->contains(Succs[0]))
         ExitBlock = Succs[0];
@@ -1658,6 +1678,7 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
 
       SingleUncountableEdge = {BB, ExitBlock};
     } else
+      // ==FYP== If the Exiting block has a countable SCEV add it to the countableExitingBlocks list
       CountableExitingBlocks.push_back(BB);
   }
   // We can safely ignore the predicates here because when vectorizing the loop
