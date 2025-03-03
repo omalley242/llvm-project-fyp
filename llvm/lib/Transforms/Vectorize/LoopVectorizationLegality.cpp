@@ -27,6 +27,7 @@
 #include "llvm/IR/PatternMatch.h"
 #include "llvm/Transforms/Utils/SizeOpts.h"
 #include "llvm/Transforms/Vectorize/LoopVectorize.h"
+#include <string>
 
 using namespace llvm;
 using namespace PatternMatch;
@@ -1604,12 +1605,18 @@ bool LoopVectorizationLegality::canVectorizeLoopNestCFG(
   return Result;
 }
 
+static int PARTIAL_VECTORIZABLE_LOOP_COUNT = 0;
+static int TOTAL_LOOP_COUNT = 0;
+
 // ==FYP== Early Exit Check
 bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
+    TOTAL_LOOP_COUNT += 1;
+
   // ==FYP== Get Nodes that return to the loop header
   BasicBlock *LatchBB = TheLoop->getLoopLatch();
 
   // ==FYP== If no nodes return to the header we cannot vectorise (may be handled by the SLP Vectorizer)
+  // ==FYP== Non-Partially vectorizable loop
   if (!LatchBB) {
     reportVectorizationFailure("Loop does not have a latch",
                                "Cannot vectorize early exit loop",
@@ -1619,16 +1626,18 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
 
   // ==FYP== if there are any reduction variables or FixedOrderRecurrences Do Not Vectorize
   // ==FYP== A reduction variable / Fixed Order Recurrance is a form of cross-iteration dependacy
+  // ==FYP== Partially Vectorizable
   if (Reductions.size() || FixedOrderRecurrences.size()) {
     reportVectorizationFailure(
         "Found reductions or recurrences in early-exit loop",
         "Cannot vectorize early exit loop with reductions or recurrences",
         "RecurrencesInEarlyExitLoop", ORE, TheLoop);
+    PARTIAL_VECTORIZABLE_LOOP_COUNT += 1;
     return false;
   }
 
-  // ==FYP== Get a list of all exiting blocks 
-  // ==FYP (blocks that have control flow to reach a block outside the loop)
+  // ==FYP== Get a list of all exiting blocks
+  // ==FYP== (blocks that have control flow to reach a block outside the loop)
   SmallVector<BasicBlock *, 8> ExitingBlocks;
   TheLoop->getExitingBlocks(ExitingBlocks);
 
@@ -1637,7 +1646,7 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
   std::optional<std::pair<BasicBlock *, BasicBlock *>> SingleUncountableEdge;
   for (BasicBlock *BB : ExitingBlocks) {
     // ==FYP== Calculate the amount of times the backedge is taken before this exit block within the loop
-    // ==FYP== Using a set of predicates (assumptions) about the scalar evolution 
+    // ==FYP== Using a set of predicates (assumptions) about the scalar evolution
     const SCEV *EC =
         PSE.getSE()->getPredicatedExitCount(TheLoop, BB, &Predicates);
 
@@ -1648,7 +1657,11 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
       UncountableExitingBlocks.push_back(BB);
 
       // ==FYP== check if the currently tested exiting block has two successors if it does not have 2
+<<<<<<< HEAD
 >>>>>>> 86d90f177cd0 (feat: adding extra comments to Loop Vectorization Legality)
+=======
+      // ==FYP== Currently ignores early exit blocks with more than 1 branch
+>>>>>>> 23c11985e3fd (feat: add partial vec counter)
       SmallVector<BasicBlock *, 2> Succs(successors(BB));
       if (Succs.size() != 2) {
         reportVectorizationFailure(
@@ -1658,7 +1671,7 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
         return false;
       }
 
-      // ==FYP== Look at the exit blocks of the exiting block currently being reviewed one of them must 
+      // ==FYP== Look at the exit blocks of the exiting block currently being reviewed one of them must
       // ==FYP== not be within the loop for it to be exiting, add the Exit block to the UncountableExitBlocks list
       BasicBlock *ExitBlock;
       if (!TheLoop->contains(Succs[0]))
@@ -1687,28 +1700,46 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
   // PSE.getSymbolicMaxBackedgeTakenCount() below.
   Predicates.clear();
 
+<<<<<<< HEAD
   if (!SingleUncountableEdge) {
     LLVM_DEBUG(dbgs() << "LV: Cound not find any uncountable exits");
+=======
+  // ==FYP== With FlexVec we may be able to increase this
+  // ==FYPTODO== increase the amount of accepted early exits
+  // We only support one uncountable early exit.
+  if (getUncountableExitingBlocks().size() != 1) {
+    reportVectorizationFailure(
+        "Loop has too many uncountable exits",
+        "Cannot vectorize early exit loop with more than one early exit",
+        "TooManyUncountableEarlyExits", ORE, TheLoop);
+    PARTIAL_VECTORIZABLE_LOOP_COUNT += 1; // ==FYP COUNT==
+>>>>>>> 23c11985e3fd (feat: add partial vec counter)
     return false;
   }
 
   // The only supported early exit loops so far are ones where the early
   // exiting block is a unique predecessor of the latch block.
+  // ==FYP== only able to vectorize early exits that come before the latch block
+  // ==FYP== and are the only block before the latch block
   BasicBlock *LatchPredBB = LatchBB->getUniquePredecessor();
   if (LatchPredBB != SingleUncountableEdge->first) {
     reportVectorizationFailure("Early exit is not the latch predecessor",
                                "Cannot vectorize early exit loop",
                                "EarlyExitNotLatchPredecessor", ORE, TheLoop);
+    PARTIAL_VECTORIZABLE_LOOP_COUNT += 1; // ==FYP COUNT==
     return false;
   }
 
   // The latch block must have a countable exit.
+  // ==FYP== If we do not know the total amount of iterations we cannot vectorize
+  // ==FYPTODO== This is possible with FlexVec
   if (isa<SCEVCouldNotCompute>(
           PSE.getSE()->getPredicatedExitCount(TheLoop, LatchBB, &Predicates))) {
     reportVectorizationFailure(
         "Cannot determine exact exit count for latch block",
         "Cannot vectorize early exit loop",
         "UnknownLatchExitCountEarlyExitLoop", ORE, TheLoop);
+    PARTIAL_VECTORIZABLE_LOOP_COUNT += 1; // ==FYP COUNT==
     return false;
   }
   assert(llvm::is_contained(CountableExitingBlocks, LatchBB) &&
@@ -1716,6 +1747,7 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
 
   // Check to see if there are instructions that could potentially generate
   // exceptions or have side-effects.
+  // ==FYP== Define function to check if an instruction is safe to speculate
   auto IsSafeOperation = [](Instruction *I) -> bool {
     switch (I->getOpcode()) {
     case Instruction::Load:
@@ -1729,15 +1761,24 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
     }
   };
 
+
+  // ==FYP== Iterate Over each code block
   for (auto *BB : TheLoop->blocks())
+    // ==FYP== Iterate Iterate over each instruction within each block
     for (auto &I : *BB) {
+      // ==FYP== if there is a write to memory within the loop dont vectorize
+      // ==FYP== This should become possible with FlexVec
       if (I.mayWriteToMemory()) {
         // We don't support writes to memory.
         reportVectorizationFailure(
             "Writes to memory unsupported in early exit loops",
             "Cannot vectorize early exit loop with writes to memory",
             "WritesInEarlyExitLoop", ORE, TheLoop);
+        PARTIAL_VECTORIZABLE_LOOP_COUNT += 1; // ==FYP COUNT==
         return false;
+
+      // ==FYP== if the Instruction is unsafe dont attempt to vectorize
+      // ==FYP== Not partially vectorizable
       } else if (!IsSafeOperation(&I)) {
         reportVectorizationFailure("Early exit loop contains operations that "
                                    "cannot be speculatively executed",
@@ -1753,12 +1794,17 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
 
   // TODO: Handle loops that may fault.
   Predicates.clear();
+
+  // ==FYP== Return true if the loop cannot fault on any iteration and only
+  // ==FYP== contains read-only memory accesses.
+  // ==FYP== Should be partially vectorizable if we use valid faulting instructions
   if (!isDereferenceableReadOnlyLoop(TheLoop, PSE.getSE(), DT, AC,
                                      &Predicates)) {
     reportVectorizationFailure(
         "Loop may fault",
         "Cannot vectorize potentially faulting early exit loop",
         "PotentiallyFaultingEarlyExitLoop", ORE, TheLoop);
+    PARTIAL_VECTORIZABLE_LOOP_COUNT += 1;
     return false;
   }
 
@@ -1834,9 +1880,18 @@ bool LoopVectorizationLegality::canVectorize(bool UseVPlanNativePath) {
   }
 
   if (isa<SCEVCouldNotCompute>(PSE.getBackedgeTakenCount())) {
+<<<<<<< HEAD
     if (TheLoop->getExitingBlock()) {
       reportVectorizationFailure("Cannot vectorize uncountable loop",
                                  "UnsupportedUncountableLoop", ORE, TheLoop);
+=======
+    HasUncountableEarlyExit = true;
+    // ==FYP== check early exit legality
+    // Report the Partial Vectorization count here
+    if (!isVectorizableEarlyExitLoop()) {
+      UncountableExitingBlocks.clear();
+      HasUncountableEarlyExit = false;
+>>>>>>> 23c11985e3fd (feat: add partial vec counter)
       if (DoExtraAnalysis)
         Result = false;
       else
@@ -1850,6 +1905,11 @@ bool LoopVectorizationLegality::canVectorize(bool UseVPlanNativePath) {
           return false;
       }
     }
+
+    // ==FYP== Report
+    auto count_string = std::to_string(PARTIAL_VECTORIZABLE_LOOP_COUNT);
+    reportVectorizationFailure("FYP Partially Vectorizable Early Exit Count: " + count_string, "FYP", ORE, TheLoop);
+    // ==FYP==
   }
 
   // Go over each instruction and look at memory deps.
