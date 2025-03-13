@@ -1580,12 +1580,9 @@ bool LoopVectorizationLegality::canVectorizeLoopNestCFG(
   return Result;
 }
 
-static int PARTIAL_VECTORIZABLE_LOOP_COUNT = 0;
-static int TOTAL_LOOP_COUNT = 0;
 
 // ==FYP== Early Exit Check
 bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
-    TOTAL_LOOP_COUNT += 1;
 
   // ==FYP== Get Nodes that return to the loop header
   BasicBlock *LatchBB = TheLoop->getLoopLatch();
@@ -1607,7 +1604,6 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
         "Found reductions or recurrences in early-exit loop",
         "Cannot vectorize early exit loop with reductions or recurrences",
         "RecurrencesInEarlyExitLoop", ORE, TheLoop);
-    PARTIAL_VECTORIZABLE_LOOP_COUNT += 1;
     return false;
   }
 
@@ -1667,7 +1663,6 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
         "Loop has too many uncountable exits",
         "Cannot vectorize early exit loop with more than one early exit",
         "TooManyUncountableEarlyExits", ORE, TheLoop);
-    PARTIAL_VECTORIZABLE_LOOP_COUNT += 1; // ==FYP COUNT==
     return false;
   }
 
@@ -1680,7 +1675,6 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
     reportVectorizationFailure("Early exit is not the latch predecessor",
                                "Cannot vectorize early exit loop",
                                "EarlyExitNotLatchPredecessor", ORE, TheLoop);
-    PARTIAL_VECTORIZABLE_LOOP_COUNT += 1; // ==FYP COUNT==
     return false;
   }
 
@@ -1693,7 +1687,6 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
         "Cannot determine exact exit count for latch block",
         "Cannot vectorize early exit loop",
         "UnknownLatchExitCountEarlyExitLoop", ORE, TheLoop);
-    PARTIAL_VECTORIZABLE_LOOP_COUNT += 1; // ==FYP COUNT==
     return false;
   }
   assert(llvm::is_contained(CountableExitingBlocks, LatchBB) &&
@@ -1728,7 +1721,6 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
             "Writes to memory unsupported in early exit loops",
             "Cannot vectorize early exit loop with writes to memory",
             "WritesInEarlyExitLoop", ORE, TheLoop);
-        PARTIAL_VECTORIZABLE_LOOP_COUNT += 1; // ==FYP COUNT==
         return false;
 
       // ==FYP== if the Instruction is unsafe dont attempt to vectorize
@@ -1758,7 +1750,6 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
         "Loop may fault",
         "Cannot vectorize potentially faulting early exit loop",
         "PotentiallyFaultingEarlyExitLoop", ORE, TheLoop);
-    PARTIAL_VECTORIZABLE_LOOP_COUNT += 1;
     return false;
   }
 
@@ -1846,10 +1837,6 @@ bool LoopVectorizationLegality::canVectorize(bool UseVPlanNativePath) {
         return false;
     }
 
-    // ==FYP== Report
-    auto count_string = std::to_string(PARTIAL_VECTORIZABLE_LOOP_COUNT);
-    reportVectorizationFailure("FYP Partially Vectorizable Early Exit Count: " + count_string, "FYP", ORE, TheLoop);
-    // ==FYP==
   }
 
   // Go over each instruction and look at memory deps.
