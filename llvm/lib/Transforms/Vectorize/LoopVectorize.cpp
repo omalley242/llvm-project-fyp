@@ -63,6 +63,9 @@
 #include "VPlanTransforms.h"
 #include "VPlanUtils.h"
 #include "VPlanVerifier.h"
+#include "llvm/IR/PassManager.h"
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Passes/PassPlugin.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
@@ -4115,7 +4118,7 @@ FixedScalableVFPair LoopVectorizationCostModel::computeFeasibleMaxVF(
 
 FixedScalableVFPair
 LoopVectorizationCostModel::computeMaxVF(ElementCount UserVF, unsigned UserIC) {
-  if (Legal->getRuntimePointerChecking()->Need && TTI.hasBranchDivergence()) {
+  if (Legal->getRuntimePointerChecking()->Need) {
     // TODO: It may be useful to do since it's still likely to be dynamically
     // uniform if the target can skip.
     reportVectorizationFailure(
@@ -4194,6 +4197,8 @@ LoopVectorizationCostModel::computeMaxVF(ElementCount UserVF, unsigned UserIC) {
     InterleaveInfo.invalidateGroupsRequiringScalarEpilogue();
   }
 
+  errs() << "test 4";
+
   FixedScalableVFPair MaxFactors = computeFeasibleMaxVF(MaxTC, UserVF, true);
 
   // Avoid tail folding if the trip count is known to be a multiple of any VF
@@ -4209,6 +4214,8 @@ LoopVectorizationCostModel::computeMaxVF(ElementCount UserVF, unsigned UserIC) {
     } else
       MaxPowerOf2RuntimeVF = std::nullopt; // Stick with tail-folding for now.
   }
+
+  errs() << "test 5";
 
   if (MaxPowerOf2RuntimeVF && *MaxPowerOf2RuntimeVF > 0) {
     assert((UserVF.isNonZero() || isPowerOf2_32(*MaxPowerOf2RuntimeVF)) &&
@@ -4235,6 +4242,8 @@ LoopVectorizationCostModel::computeMaxVF(ElementCount UserVF, unsigned UserIC) {
     }
   }
 
+  errs() << "test 6";
+
   // If we don't know the precise trip count, or if the trip count that we
   // found modulo the vectorization factor is not zero, try to fold the tail
   // by masking.
@@ -4257,6 +4266,8 @@ LoopVectorizationCostModel::computeMaxVF(ElementCount UserVF, unsigned UserIC) {
     }
     return MaxFactors;
   }
+
+  errs() << "test 7";
 
   // If there was a tail-folding hint/switch, but we can't fold the tail by
   // masking, fallback to a vectorization with a scalar epilogue.
@@ -10855,4 +10866,349 @@ void LoopVectorizePass::printPipeline(
   OS << (InterleaveOnlyWhenForced ? "" : "no-") << "interleave-forced-only;";
   OS << (VectorizeOnlyWhenForced ? "" : "no-") << "vectorize-forced-only;";
   OS << '>';
+}
+
+
+namespace llvm {
+
+
+// ==== Custom Early Exit Pass ====
+
+// Process and loop and apply early exit vectorization
+bool vectorizeEarlyExitLoop(Function &F, Loop *L, BasicBlock* earlyExitBlock, PredicatedScalarEvolution &PSE,
+  LoopInfo *LI, DominatorTree *DT,
+  TargetTransformInfo &TTI,
+  TargetLibraryInfo *TLI,
+  AssumptionCache *AC,
+  OptimizationRemarkEmitter &ORE,
+  LoopVectorizationLegality &LVL,
+  LoopVectorizationCostModel &CM,
+  InterleavedAccessInfo &IAI,
+  LoopVectorizeHints &Hints,
+  DebugInfoFinder *DBF,
+  ProfileSummaryInfo *PSI,
+  BlockFrequencyInfo *BFI )
+  {
+
+  const DataLayout DL = DataLayout();
+
+  // Helper struct for generating runtime checks within the loops
+  GeneratedRTChecks RTChecks(PSE, DT,
+    LI, &TTI,
+    DL, false);
+
+  // The main class that drives vectorization after all past checks
+  LoopVectorizationPlanner LVP(L, LI, DT, TLI, TTI, &LVL, CM, IAI, PSE, Hints, &ORE);
+  
+  //Set the Trip count of the VPlan Manually as the SCEV will fail for early exit loops
+  //ToDo find the trip count by examining analysis data
+  ConstantInt *Const = ConstantInt::get(Type::getInt32Ty(L->getHeader()->getContext()), 64);
+
+  //Create a VPValue from the Constant
+  VPValue *VPVal = new VPValue(Const);
+
+
+  //Create a custom VPlan manually
+  auto Plan = std::make_unique<VPlan>(VPIRBasicBlock::fromBasicBlock(L->getLoopPreheader()), VPVal, VPIRBasicBlock::fromBasicBlock(L->getHeader()));
+  
+  //Create an inital Vector Loop Pre Header Block
+  VPBasicBlock *VecPreheader = new VPBasicBlock("vector.ph");
+
+  //Get the original loop header
+  VPBlockBase *ScalarHeader = Plan->getScalarHeader();
+  
+  //Connect the Plan Start to the Vector Pre Header
+  VPBlockUtils::connectBlocks(Plan->getEntry(), VecPreheader);
+
+  // Create VPRegionBlock, with empty header and latch blocks, to be filled
+  // during processing later.
+  VPBasicBlock *HeaderVPBB = new VPBasicBlock("vector.body");
+  VPBasicBlock *LatchVPBB = new VPBasicBlock("vector.latch");
+  VPBlockUtils::insertBlockAfter(LatchVPBB, HeaderVPBB);
+
+  auto *TopRegion = new VPRegionBlock(HeaderVPBB, LatchVPBB, "vector loop",
+                                      false /*isReplicator*/);
+
+  // Insert Top Region Block after the VecPreHeader                                    
+  VPBlockUtils::insertBlockAfter(TopRegion, VecPreheader);
+  VPBasicBlock *MiddleVPBB = new VPBasicBlock("middle.block");
+  VPBlockUtils::insertBlockAfter(MiddleVPBB, TopRegion);
+
+  //Create a new scalar PreHeaderBlock
+  VPBasicBlock *ScalarPH = new VPBasicBlock("scalar.ph");
+  VPBlockUtils::connectBlocks(ScalarPH, ScalarHeader);
+
+  //Obtain the ExitBlock of the loop and convert it to a VPIRBasicBlock
+  auto *VPExitBlock = VPIRBasicBlock::fromBasicBlock(earlyExitBlock);
+
+  // The connection order corresponds to the operands of the conditional branch.
+  VPBlockUtils::insertBlockAfter(VPExitBlock, MiddleVPBB);
+  VPBlockUtils::connectBlocks(MiddleVPBB, ScalarPH);
+
+  auto *ScalarLatchTerm = L->getLoopLatch()->getTerminator();
+
+  // Here we use the same DebugLoc as the scalar loop latch terminator instead
+  // of the corresponding compare because they may have ended up with
+  // different line numbers and we want to avoid awkward line stepping while
+  // debugging. Eg. if the compare has got a line number inside the loop.
+  VPBuilder Builder(MiddleVPBB);
+  bool TailFolded = true;
+  VPValue *Cmp =
+      TailFolded
+          ? Plan->getOrAddLiveIn(ConstantInt::getTrue(
+                IntegerType::getInt1Ty(Const->getType()->getContext())))
+          : Builder.createICmp(CmpInst::ICMP_EQ, Plan->getTripCount(),
+                               &Plan->getVectorTripCount(),
+                               ScalarLatchTerm->getDebugLoc(), "cmp.n");
+  Builder.createNaryOp(VPInstruction::BranchOnCond, {Cmp},
+                       ScalarLatchTerm->getDebugLoc());
+
+  
+  // Class to perform Vectorization of single basic block loops
+  InnerLoopVectorizer ILV(L, PSE,
+    LI, DT,
+    TLI,
+    &TTI, AC,
+    &ORE, ElementCount::getScalable(4),
+    ElementCount::getFixed(1),
+    1, &LVL,
+    &CM, BFI,
+    PSI, RTChecks,
+    *Plan.get());
+
+
+  // Add a new vectorization factor and set it to the current enabled one
+  (*Plan.get()).addVF(ElementCount::getScalable(4));
+  (*Plan.get()).setVF(ElementCount::getScalable(4));
+
+  // Set the Widest Induction Variable Type (this would normally be set by calling canVectorize)
+  LVL.setWidestIndTy(Type::getInt32Ty(L->getHeader()->getContext()));
+
+  LVP.executePlan(ElementCount::getScalable(4), 1, *Plan.get(), ILV, DT, false);
+
+  F.print(errs());
+
+  return true;
+}
+
+// Look at a loop and check if it is valid for early exit vectorization and add it to the worklist 
+// if it is viable
+void collectEarlyExitLoops(Loop &L, LoopInfo *LI, OptimizationRemarkEmitter *ORE, SmallVectorImpl<std::pair<Loop *, BasicBlock *>> &V, DominatorTree *DT) {
+
+  // Collect inner loops without irreducible control flow. For
+  // now, only collect outer loops that have explicit vectorization hints.
+  if (L.isInnermost() || isExplicitVecOuterLoop(&L, ORE)) {
+    LoopBlocksRPO RPOT(&L);
+    RPOT.perform(LI);
+    if (!containsIrreducibleCFG<const BasicBlock *>(RPOT, *LI)) {
+
+      // Get Nodes that return to the loop header
+      BasicBlock *LatchBB = L.getLoopLatch();
+
+      // If no nodes return to the header we cannot vectorise (may be handled by the SLP Vectorizer)
+      if (!LatchBB) {
+        errs() << "Loop does not contain a latch block; skipping\n"; // ToDo: Replace with reportVectorizationFailure
+        return;
+      }
+
+      // Check if more than one exiting block exists i.e there is an early exit
+      SmallVector<BasicBlock*> ExitingBlocks;
+
+      L.getExitingBlocks(ExitingBlocks);
+
+      // Ensure the exiting block only has two possible exits (leaving the loop and carrying on)
+      if (ExitingBlocks.size() == 1) {
+        errs() << "Loop has one unique exiting block; skipping\n"; // ToDo: Replace with reportVectorizationFailure
+        return;
+      }
+
+      // Check that the exit block is a conditional, otherwise we cannot speculatively vectorize
+      for (auto Block : ExitingBlocks) {
+        if (L.getHeader() == Block) {
+          errs() << "Exit Block, is part of loop header; skipping\n"; // ToDo: Replace with reportVectorizationFailure
+          continue;
+        }
+
+        // Ensure the exit instruction is a conditional
+        BranchInst *BI = dyn_cast<BranchInst>(Block->getTerminator());
+        if (!BI || !BI->isConditional()) {
+          errs() << "Exiting block is not a conditional branch; skipping\n"; // ToDo: Replace with reportVectorizationFailure
+          continue;
+        }
+
+        // Collect the two succesors of the exiting block
+        BasicBlock *exitBlockOne = BI->getSuccessor(0);
+        BasicBlock *exitBlockTwo = BI->getSuccessor(1);
+
+        // Ensure atleast one of the successors leaves the loop
+        if (L.contains(exitBlockOne) && L.contains(exitBlockTwo)) {
+          errs() << "Exit Block is within the loop; skipping\n"; // ToDo: Replace with reportVectorizationFailure
+          continue;
+        }
+
+        // Check to see if there are instructions that could potentially generate
+        // exceptions or have side-effects.
+        auto IsSafeOperation = [](Instruction *I) -> bool {
+          switch (I->getOpcode()) {
+          case Instruction::Load:
+          case Instruction::Store:
+          case Instruction::PHI:
+          case Instruction::Br:
+            // These are checked separately.
+            return true;
+          default:
+            return isSafeToSpeculativelyExecute(I);
+          }
+        };
+
+        for (auto *Block : L.blocks()) {
+          for(auto &I : *Block) {
+            // if the Instruction is unsafe dont attempt to vectorize
+            // Not partially vectorizable
+            if (!IsSafeOperation(&I)) {
+              errs() << "Block contains instructions that cannot be speculatively executed\n"; // ToDo: Replace with reportVectorizationFailure
+              return;
+            }
+          } 
+        }
+
+        // This loop has been added therefore exit
+        V.push_back(std::make_pair(&L, Block));
+        return;
+
+      }
+
+      return;
+    }
+  }
+
+  for (Loop *InnerL : L)
+  collectEarlyExitLoops(*InnerL, LI, ORE, V, DT);
+}
+
+//Top level driver to run all the required analysis and check if vectorization is viable
+LoopVectorizeResult runEarlyExitVectorization(Function &F, FunctionAnalysisManager &AM) {
+  auto LI = &AM.getResult<LoopAnalysis>(F);
+
+  // There are no loops in the function. Return before computing other
+  // expensive analyses.
+  if (LI->empty())
+    return LoopVectorizeResult(false, false);
+
+  // Collect all the analysis passes 
+  auto SE = &AM.getResult<ScalarEvolutionAnalysis>(F);
+  auto TTI = &AM.getResult<TargetIRAnalysis>(F);
+  auto DT = &AM.getResult<DominatorTreeAnalysis>(F);
+  auto TLI = &AM.getResult<TargetLibraryAnalysis>(F);
+  auto AC = &AM.getResult<AssumptionAnalysis>(F);
+  auto DB = &AM.getResult<DemandedBitsAnalysis>(F);
+  auto ORE = &AM.getResult<OptimizationRemarkEmitterAnalysis>(F);
+  LoopAccessInfoManager *LAIM = &AM.getResult<LoopAccessAnalysis>(F);
+
+  auto &MAMProxy = AM.getResult<ModuleAnalysisManagerFunctionProxy>(F);
+  auto PSI = MAMProxy.getCachedResult<ProfileSummaryAnalysis>(*F.getParent());
+  BlockFrequencyAnalysis::Result* BFI = nullptr;
+
+  if (PSI && PSI->hasProfileSummary())
+    BFI = &AM.getResult<BlockFrequencyAnalysis>(F);
+
+  errs() << "Obtained Analysis Passes\n";
+
+  // Check the amount of vector registers for the target
+  // Also check if interleaving is supported
+  if (!TTI->getNumberOfRegisters(TTI->getRegisterClassForType(true)) &&
+      TTI->getMaxInterleaveFactor(ElementCount::getFixed(1)) < 2)
+    return LoopVectorizeResult(false, false);
+
+  bool Changed = false, CFGChanged = false;
+
+  // Loops are required to be in simplified form therefore simply if possible
+  for (const auto &L : *LI)
+    Changed |= CFGChanged |=
+        simplifyLoop(L, DT, LI, SE, AC, nullptr, false /* PreserveLCSSA */);
+
+  // Build up a worklist of inner-loops to vectorize. This is necessary as
+  // the act of vectorizing or partially unrolling a loop creates new loops
+  // and can invalidate iterators across the loops.
+  SmallVector<std::pair<Loop *, BasicBlock *>, 8> Worklist;
+
+  for (Loop *L : *LI)
+    collectEarlyExitLoops(*L, LI, ORE, Worklist, DT);
+
+  // Now walk the identified inner loops.
+  while (!Worklist.empty()) {
+
+    errs() << "Running Vectorization\n";
+    
+    std::pair<Loop *, BasicBlock *> LoopElement = Worklist.pop_back_val();
+
+    // For the inner loops we actually process, form LCSSA to simplify the
+    // transform.
+    Changed |= formLCSSARecursively(*LoopElement.first, *DT, LI, SE);
+
+    PredicatedScalarEvolution PSE(*SE, *LoopElement.first); //Interface for predicated SCEV
+
+    LoopVectorizeHints Hints(LoopElement.first, true, *ORE); //Util for getting and setting loop vectorization hints
+
+    LoopVectorizationRequirements *R = nullptr; //Class that holds requirements that must be satisfied on the loop
+
+    InterleavedAccessInfo IAI(PSE, LoopElement.first, DT, LI, &LAIM->getInfo(*LoopElement.first)); //Class to analyse interleaved memory accesses within the loop
+
+    LoopVectorizationLegality LVL( // The LVL class checks for legality of vectorization of a loop (ignoring cost) 
+      LoopElement.first, PSE, DT,
+      TTI, TLI, &F,
+      *LAIM, LI, ORE,
+      R, &Hints, DB,
+      AC,BFI, PSI);
+
+    // Class that attempts to predict vectorization speed ups
+    LoopVectorizationCostModel CM(llvm::ScalarEpilogueLowering::CM_ScalarEpilogueAllowed, LoopElement.first, PSE, LI, &LVL, *TTI, TLI, DB, AC, ORE, &F, &Hints, IAI); 
+
+    Changed |= CFGChanged |= vectorizeEarlyExitLoop(F, LoopElement.first, LoopElement.second, PSE, LI, DT, *TTI, TLI, AC, *ORE, LVL, CM, IAI, Hints, nullptr, PSI, BFI);
+  
+    if (Changed) {
+        LAIM->clear();
+  
+#ifndef NDEBUG
+        if (VerifySCEV)
+          SE->verify();
+#endif
+    }
+  }
+
+  return LoopVectorizeResult(true, true);
+}
+
+
+// The entry point of the pass
+PreservedAnalyses EarlyExitVectorization::run(Function &F, FunctionAnalysisManager &AM) {
+  errs() << "Running Custom Pass\n";
+  bool changed = false;
+  changed |= runEarlyExitVectorization(F, AM).MadeAnyChange;
+  return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
+}
+
+// Provide a function for registering the pass statically
+void registerEarlyExitVectorizationPass(PassBuilder &PB) {
+  // Register the pass to enable its usage within OPT
+  PB.registerPipelineParsingCallback(
+    [](StringRef Name, FunctionPassManager &FPM,
+       ArrayRef<PassBuilder::PipelineElement>) {
+      if (Name == "early-exit-vectorization") {
+        FPM.addPass(EarlyExitVectorization());
+        return true;
+      }
+      return false;
+    });
+  // Register the pass in all optimization levels for usage in clang
+  PB.registerPipelineStartEPCallback(
+    [](ModulePassManager &MPM, OptimizationLevel Level) {
+      if (Level != OptimizationLevel::O0) { // only if optimizations enabled
+        FunctionPassManager FPM;
+        FPM.addPass(EarlyExitVectorization());
+        MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
+      }
+    });
+}
+
 }

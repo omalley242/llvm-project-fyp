@@ -57,9 +57,12 @@
 #define LLVM_TRANSFORMS_VECTORIZE_LOOPVECTORIZE_H
 
 #include "llvm/IR/PassManager.h"
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Passes/PassPlugin.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Transforms/Utils/ExtraPassManager.h"
 #include <functional>
+#include "llvm/IR/DebugInfo.h"
 
 namespace llvm {
 
@@ -186,6 +189,36 @@ struct ShouldRunExtraVectorPasses
       public AnalysisInfoMixin<ShouldRunExtraVectorPasses> {
   static AnalysisKey Key;
 };
+
+// ==== Custom Early Exit Pass ====
+
+  class LoopVectorizationCostModel;
+  class LoopVectorizeHints;
+
+  bool vectorizeEarlyExitLoop(Function &F, Loop *L, BasicBlock* earlyExitBlock, PredicatedScalarEvolution &PSE,
+    LoopInfo *LI, DominatorTree *DT,
+    TargetTransformInfo &TTI,
+    TargetLibraryInfo *TLI,
+    AssumptionCache *AC,
+    OptimizationRemarkEmitter &ORE,
+    LoopVectorizationLegality &LVL,
+    LoopVectorizationCostModel &CM,
+    InterleavedAccessInfo &IAI,
+    LoopVectorizeHints &Hints,
+    DebugInfoFinder *DBF, ProfileSummaryInfo *PSI, BlockFrequencyInfo *BFI);
+
+void collectEarlyExitLoops(Loop &L, LoopInfo *LI, OptimizationRemarkEmitter *ORE, SmallVector<std::pair<Loop *, BasicBlock *>> &V, DominatorTree *DT);
+
+bool runEarlyExitVectorization(Function &L);
+
+// Declare the New Pass Manager Pass
+class EarlyExitVectorization : public PassInfoMixin<EarlyExitVectorization> {
+  public:
+    PreservedAnalyses run(Function &L, FunctionAnalysisManager &AM);
+};
+
+void registerEarlyExitVectorizationPass(PassBuilder &PB);
+
 } // end namespace llvm
 
 #endif // LLVM_TRANSFORMS_VECTORIZE_LOOPVECTORIZE_H

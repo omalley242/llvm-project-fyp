@@ -84,6 +84,7 @@
 #include "llvm/Transforms/Scalar/JumpThreading.h"
 #include "llvm/Transforms/Utils/Debugify.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
+#include "llvm/Transforms/Vectorize/LoopVectorize.h"
 #include <memory>
 #include <optional>
 using namespace clang;
@@ -909,6 +910,9 @@ void EmitAssemblyHelper::RunOptimizationPipeline(
       CodeGenOpts.VerifyEach, PrintPassOpts);
   SI.registerCallbacks(PIC, &MAM);
   PassBuilder PB(TM.get(), PTO, PGOOpt, &PIC);
+
+  //Register our custom pass
+  registerEarlyExitVectorizationPass(PB);
 
   // Handle the assignment tracking feature options.
   switch (CodeGenOpts.getAssignmentTrackingMode()) {

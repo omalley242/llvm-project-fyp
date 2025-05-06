@@ -38,6 +38,7 @@
 #include "llvm/Transforms/Instrumentation/AddressSanitizer.h"
 #include "llvm/Transforms/Scalar/LoopPassManager.h"
 #include "llvm/Transforms/Utils/Debugify.h"
+#include "llvm/Transforms/Vectorize/LoopVectorize.h"
 
 using namespace llvm;
 using namespace opt_tool;
@@ -434,6 +435,9 @@ bool llvm::runPassPipeline(
   PassBuilder PB(TM, PTO, P, &PIC);
   registerEPCallbacks(PB);
 
+  //Register our pass
+  registerEarlyExitVectorizationPass(PB);
+  
   // For any loaded plugins, let them register pass builder callbacks.
   for (auto &PassPlugin : PassPlugins)
     PassPlugin.registerPassBuilderCallbacks(PB);

@@ -469,6 +469,12 @@ public:
     return UncountableExitBlocks;
   }
 
+  // Custom class to allow us to work around calling canVectorize
+  void setWidestIndTy(Type *newWidestIndTy) {
+    WidestIndTy = newWidestIndTy;
+  }
+
+
 private:
   /// Return true if the pre-header, exiting and latch blocks of \p Lp and all
   /// its nested loops are considered legal for vectorization. These legal
