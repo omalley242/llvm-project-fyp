@@ -8108,8 +8108,9 @@ VPValue *VPRecipeBuilder::createEdgeMask(BasicBlock *Src, BasicBlock *Dst) {
   // adding uses of an otherwise potentially dead instruction unless we are
   // vectorizing a loop with uncountable exits. In that case, we always
   // materialize the mask.
+  // ==== Modifed to work for multiple early exits ====
   if (OrigLoop->isLoopExiting(Src) &&
-      Src != Legal->getUncountableEarlyExitingBlock())
+      !Legal->isBlockUncountableExiting(Src))
     return EdgeMaskCache[Edge] = SrcMask;
 
   VPValue *EdgeMask = getVPValueOrAddLiveIn(BI->getCondition());

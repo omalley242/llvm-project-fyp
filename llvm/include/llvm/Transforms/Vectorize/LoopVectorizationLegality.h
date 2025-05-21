@@ -392,19 +392,42 @@ public:
 
   /// Returns true if the loop has exactly one uncountable early exit, i.e. an
   /// uncountable exit that isn't the latch block.
+  // ==== Modified to work for multiple exits ====
   bool hasUncountableEarlyExit() const {
-    return getUncountableEdge().has_value();
+    return UncountableExitingEdges.size() > 0;
   }
 
   /// Returns the uncountable early exiting block, if there is exactly one.
-  BasicBlock *getUncountableEarlyExitingBlock() const {
-    return hasUncountableEarlyExit() ? getUncountableEdge()->first : nullptr;
+  // ==== Modified to work for multiple exits ====
+  SmallVector<BasicBlock *, 8>getUncountableEarlyExitingBlocks() const {
+    SmallVector<BasicBlock *, 8> UncountableExitingBlocks;
+    for (auto Edge : UncountableExitingEdges) {
+      UncountableExitingBlocks.push_back(Edge.first);
+    }
+    return UncountableExitingBlocks;
   }
 
   /// Returns the destination of the uncountable early exiting block, if there
   /// is exactly one.
-  BasicBlock *getUncountableEarlyExitBlock() const {
-    return hasUncountableEarlyExit() ? getUncountableEdge()->second : nullptr;
+  // ==== Modified to work for multiple exits ====
+  SmallVector<BasicBlock *, 8>getUncountableEarlyExitBlocks() const {
+    SmallVector<BasicBlock *, 8> UncountableExitBlocks;
+    for (auto Edge : UncountableExitingEdges) {
+      UncountableExitBlocks.push_back(Edge.second);
+    }
+    return UncountableExitBlocks;
+  }
+
+  // ==== New Helper Function To Test Blocks ====
+  bool isBlockUncountableExiting(BasicBlock * testBlock){
+    SmallVector<BasicBlock *, 8> ExitingBlocks = getUncountableEarlyExitingBlocks(); 
+    return std::find(ExitingBlocks.begin(), ExitingBlocks.end(), testBlock) != ExitingBlocks.end();
+  }
+
+  // ==== New Helper Function To Test Blocks  ====
+  bool isBlockUncountableExit(BasicBlock * testBlock){
+    SmallVector<BasicBlock *, 8> ExitBlock = getUncountableEarlyExitBlocks(); 
+    return std::find(ExitBlock.begin(), ExitBlock.end(), testBlock) != ExitBlock.end();
   }
 
   /// Return true if there is store-load forwarding dependencies.
@@ -467,9 +490,9 @@ public:
 
   /// Returns the loop edge to an uncountable exit, or std::nullopt if there
   /// isn't a single such edge.
-  std::optional<std::pair<BasicBlock *, BasicBlock *>>
-  getUncountableEdge() const {
-    return UncountableEdge;
+  SmallVector<std::pair<BasicBlock *, BasicBlock *>, 8>
+  getUncountableExitingEdges() const {
+    return UncountableExitingEdges;
   }
 
 private:
@@ -653,7 +676,7 @@ private:
 
   /// Keep track of the loop edge to an uncountable exit, comprising a pair
   /// of (Exiting, Exit) blocks, if there is exactly one early exit.
-  std::optional<std::pair<BasicBlock *, BasicBlock *>> UncountableEdge;
+  SmallVector<std::pair<BasicBlock *, BasicBlock *>, 8> UncountableExitingEdges;
 };
 
 } // namespace llvm

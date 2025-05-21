@@ -490,7 +490,9 @@ void VPlanTransforms::prepareForVectorization(
   addCanonicalIVRecipes(Plan, cast<VPBasicBlock>(HeaderVPB),
                         cast<VPBasicBlock>(LatchVPB), InductionTy, IVDL);
 
-  [[maybe_unused]] bool HandledUncountableEarlyExit = false;
+  // ==== Modified To Handle More Than One Early Exit ==== 
+  // [[maybe_unused]] bool HandledUncountableEarlyExit = false;
+
   // Disconnect all early exits from the loop leaving it with a single exit from
   // the latch. Early exits that are countable are left for a scalar epilog. The
   // condition of uncountable early exits (currently at most one is supported)
@@ -501,12 +503,13 @@ void VPlanTransforms::prepareForVectorization(
       if (Pred == MiddleVPBB)
         continue;
       if (HasUncountableEarlyExit) {
-        assert(!HandledUncountableEarlyExit &&
-               "can handle exactly one uncountable early exit");
+        // ==== Modified To Handle More Than One Early Exit ==== 
+        // assert(!HandledUncountableEarlyExit &&
+        //        "can handle exactly one uncountable early exit");
         handleUncountableEarlyExit(cast<VPBasicBlock>(Pred), EB, Plan,
                                    cast<VPBasicBlock>(HeaderVPB),
                                    cast<VPBasicBlock>(LatchVPB), Range);
-        HandledUncountableEarlyExit = true;
+        // HandledUncountableEarlyExit = true;
       }
 
       cast<VPBasicBlock>(Pred)->getTerminator()->eraseFromParent();
@@ -514,8 +517,9 @@ void VPlanTransforms::prepareForVectorization(
     }
   }
 
-  assert((!HasUncountableEarlyExit || HandledUncountableEarlyExit) &&
-         "missed an uncountable exit that must be handled");
+  // ==== Modified To Handle More Than One Early Exit ==== 
+  // assert((!HasUncountableEarlyExit || HandledUncountableEarlyExit) &&
+  //        "missed an uncountable exit that must be handled");
 
   // Create SCEV and VPValue for the trip count.
   // We use the symbolic max backedge-taken-count, which works also when
