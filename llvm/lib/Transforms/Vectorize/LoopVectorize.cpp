@@ -8175,7 +8175,8 @@ VPValue *VPRecipeBuilder::getBlockInMask(BasicBlock *BB) const {
   return BCEntryIt->second;
 }
 
-void VPRecipeBuilder::createBlockInMask(BasicBlock *BB) {
+// ==== Requires modification as now mask is added to blocks not within the loop ====
+void VPRecipeBuilder::createBlockInMask(BasicBlock *BB) { 
   assert(OrigLoop->contains(BB) && "Block is not a part of a loop");
   assert(BlockMaskCache.count(BB) == 0 && "Mask for block already computed");
   assert(OrigLoop->getHeader() != BB &&
@@ -9188,12 +9189,13 @@ LoopVectorizationPlanner::tryToBuildVPlanWithVPRecipes(VFRange &Range,
           },
           Range);
   DenseMap<const VPBlockBase *, BasicBlock *> VPB2IRBB;
+  SmallVector<VPValue *> EarlyExitMaskCalculation;
   auto Plan = VPlanTransforms::buildPlainCFG(OrigLoop, *LI, VPB2IRBB);
   VPlanTransforms::prepareForVectorization(
       *Plan, Legal->getWidestInductionType(), PSE, RequiresScalarEpilogueCheck,
       CM.foldTailByMasking(), OrigLoop,
       getDebugLocFromInstOrOperands(Legal->getPrimaryInduction()),
-      Legal->hasUncountableEarlyExit(), Range);
+      Legal->hasUncountableEarlyExit(), Range, VPB2IRBB, EarlyExitMaskCalculation);
   VPlanTransforms::createLoopRegions(*Plan);
 
   // Don't use getDecisionAndClampRange here, because we don't know the UF
@@ -9285,11 +9287,86 @@ LoopVectorizationPlanner::tryToBuildVPlanWithVPRecipes(VFRange &Range,
       // FIXME: At the moment, masks need to be placed at the beginning of the
       // block, as blends introduced for phi nodes need to use it. The created
       // blends should be sunk after the mask recipes.
+
+      // ==== Legality has been modifed so all post early exit blocks are masked ====
       RecipeBuilder.createBlockInMask(VPBB);
     }
 
+
+
+    // Modify Mask Calculations for Early Exit Vectorization
+    VPValue* LoopMask = RecipeBuilder.getBlockInMask(HeaderVPBB);
+    
+    for (unsigned i=0; i<EarlyExitMaskCalculation.size(); i++){
+      
+      auto* maskCalc = EarlyExitMaskCalculation[i];
+      auto* earlyExitMaskCalculation = maskCalc->getDefiningRecipe();
+
+      // ==== Move Builder to where to place instrs (just after mask calc) ====
+      Builder.setInsertPoint(earlyExitMaskCalculation->getParent(), std::next(earlyExitMaskCalculation->getIterator()));
+
+      // ==== Generate new mask instruction obtaining safe lanes ====
+      
+      // ==== not mask ====
+      auto* not_mask = Builder.createNot(maskCalc);
+
+      // ==== Create Call to intrinsic to count leading zeros ====
+      VPInstruction *firstActiveLane = new VPInstruction(VPInstruction::FirstActiveLane, {not_mask}); 
+      Builder.insert(firstActiveLane);
+
+      // ==== generate step vector (based on return type) ====
+      auto* header = OrigLoop->getHeader();
+      Function* function = header->getParent();
+      LLVMContext &context = function->getContext();
+
+      Type *ScalarTy = Type::getInt1Ty(context);
+      
+
+      DebugLoc DL = DebugLoc();
+      VPInstruction *StepVec = new VPInstructionWithType(VPInstructionWithType::StepVector, {}, ScalarTy, DL);
+
+      Builder.insert(StepVec);
+
+
+      // ==== Comparison ====
+      auto* newmask = Builder.createICmp(CmpInst::ICMP_ULT, StepVec, firstActiveLane);
+
+      // ==== Replace old mask with the new reduced mask ====
+      bool StartReplacing = false;
+      VPRecipeBase* StartPoint = newmask->getDefiningRecipe();
+
+      for (VPBasicBlock *VPBB : VPBlockUtils::blocksOnly<VPBasicBlock>(RPOT)) {
+        for (VPRecipeBase &Recipe : *VPBB) {
+          
+          // Check if we've reached the starting point
+          if (&Recipe == StartPoint) {
+            StartReplacing = true;
+            continue;
+          }
+
+          if (!StartReplacing)
+            continue;
+
+          // Replace operands in the recipe that match OldValue
+          for (unsigned i = 0, e = Recipe.getNumOperands(); i != e; ++i) {
+            if (Recipe.getOperand(i) == LoopMask)
+              Recipe.setOperand(i, newmask);
+          }
+        }
+      }
+      
+
+      // repeat for each early exit
+    }
+
+    // Plan->print(errs());
+
     // Convert input VPInstructions to widened recipes.
     for (VPRecipeBase &R : make_early_inc_range(*VPBB)) {
+      if (!dyn_cast<VPSingleDefRecipe>(&R)){
+        continue;
+      }
+
       auto *SingleDef = cast<VPSingleDefRecipe>(&R);
       auto *UnderlyingValue = SingleDef->getUnderlyingValue();
       // Skip recipes that do not need transforming, including canonical IV,
@@ -9500,11 +9577,12 @@ VPlanPtr LoopVectorizationPlanner::tryToBuildVPlan(VFRange &Range) {
   assert(EnableVPlanNativePath && "VPlan-native path is not enabled.");
 
   DenseMap<const VPBlockBase *, BasicBlock *> VPB2IRBB;
+  SmallVector<VPValue *> EarlyExitMaskCalculation;
   auto Plan = VPlanTransforms::buildPlainCFG(OrigLoop, *LI, VPB2IRBB);
   VPlanTransforms::prepareForVectorization(
       *Plan, Legal->getWidestInductionType(), PSE, true, false, OrigLoop,
       getDebugLocFromInstOrOperands(Legal->getPrimaryInduction()), false,
-      Range);
+      Range, VPB2IRBB, EarlyExitMaskCalculation);
   VPlanTransforms::createLoopRegions(*Plan);
 
   for (ElementCount VF : Range)

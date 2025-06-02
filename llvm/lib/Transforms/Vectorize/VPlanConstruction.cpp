@@ -463,7 +463,7 @@ static void addCanonicalIVRecipes(VPlan &Plan, VPBasicBlock *HeaderVPBB,
 void VPlanTransforms::prepareForVectorization(
     VPlan &Plan, Type *InductionTy, PredicatedScalarEvolution &PSE,
     bool RequiresScalarEpilogueCheck, bool TailFolded, Loop *TheLoop,
-    DebugLoc IVDL, bool HasUncountableEarlyExit, VFRange &Range) {
+    DebugLoc IVDL, bool HasUncountableEarlyExit, VFRange &Range, DenseMap<const VPBlockBase *, BasicBlock *> &VPB2IRBB, SmallVector<VPValue *> &EarlyExitMaskCalculation) {
   VPDominatorTree VPDT;
   VPDT.recalculate(Plan);
 
@@ -500,6 +500,7 @@ void VPlanTransforms::prepareForVectorization(
   // early exit destination.
   for (VPIRBasicBlock *EB : Plan.getExitBlocks()) {
     for (VPBlockBase *Pred : to_vector(EB->getPredecessors())) {
+      // ==== Modified to skip predecessors within the original loop ====
       if (Pred == MiddleVPBB)
         continue;
       if (HasUncountableEarlyExit) {
@@ -508,12 +509,17 @@ void VPlanTransforms::prepareForVectorization(
         //        "can handle exactly one uncountable early exit");
         handleUncountableEarlyExit(cast<VPBasicBlock>(Pred), EB, Plan,
                                    cast<VPBasicBlock>(HeaderVPB),
-                                   cast<VPBasicBlock>(LatchVPB), Range);
+                                   cast<VPBasicBlock>(LatchVPB),
+                                   Range,
+                                   VPB2IRBB,
+                                   EarlyExitMaskCalculation);
+                                   
         // HandledUncountableEarlyExit = true;
       }
 
-      cast<VPBasicBlock>(Pred)->getTerminator()->eraseFromParent();
-      VPBlockUtils::disconnectBlocks(Pred, EB);
+      // ==== No Longer disconnect ====
+      // cast<VPBasicBlock>(Pred)->getTerminator()->eraseFromParent();
+      // VPBlockUtils::disconnectBlocks(Pred, EB);
     }
   }
 
@@ -568,6 +574,7 @@ void VPlanTransforms::prepareForVectorization(
   // of the corresponding compare because they may have ended up with
   // different line numbers and we want to avoid awkward line stepping while
   // debugging. Eg. if the compare has got a line number inside the loop.
+  
   VPBuilder Builder(MiddleVPBB);
   VPValue *Cmp =
       TailFolded

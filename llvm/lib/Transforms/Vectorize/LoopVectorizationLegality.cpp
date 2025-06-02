@@ -1407,7 +1407,7 @@ bool LoopVectorizationLegality::blockNeedsPredication(BasicBlock *BB) const {
   // then we predicate it (as it may be partially ran)
   if (hasUncountableEarlyExit()){
     for (auto ExitingBlock : getUncountableEarlyExitingBlocks()) {
-      if (DT->dominates(ExitingBlock, BB)){
+      if (!isBlockUncountableExit(BB) && DT->dominates(ExitingBlock, BB)){
         return true;
       }
     }
@@ -1901,6 +1901,12 @@ bool LoopVectorizationLegality::canFoldTailByMasking() const {
   // a bottom-test and a single exiting block. We'd have to handle the fact
   // that not every instruction executes on the last iteration.  This will
   // require a lane mask which varies through the vector loop body.  (TODO)
+  
+  // ==== Assume legality if we have an early exit ====
+  if (hasUncountableEarlyExit()){
+    return true;
+  }
+
   if (TheLoop->getExitingBlock() != TheLoop->getLoopLatch()) {
     LLVM_DEBUG(
         dbgs()

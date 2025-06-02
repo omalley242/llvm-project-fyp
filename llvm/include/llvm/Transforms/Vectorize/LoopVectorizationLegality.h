@@ -419,13 +419,13 @@ public:
   }
 
   // ==== New Helper Function To Test Blocks ====
-  bool isBlockUncountableExiting(BasicBlock * testBlock){
+  bool isBlockUncountableExiting(BasicBlock * testBlock) const{
     SmallVector<BasicBlock *, 8> ExitingBlocks = getUncountableEarlyExitingBlocks(); 
     return std::find(ExitingBlocks.begin(), ExitingBlocks.end(), testBlock) != ExitingBlocks.end();
   }
 
   // ==== New Helper Function To Test Blocks  ====
-  bool isBlockUncountableExit(BasicBlock * testBlock){
+  bool isBlockUncountableExit(BasicBlock * testBlock) const{
     SmallVector<BasicBlock *, 8> ExitBlock = getUncountableEarlyExitBlocks(); 
     return std::find(ExitBlock.begin(), ExitBlock.end(), testBlock) != ExitBlock.end();
   }

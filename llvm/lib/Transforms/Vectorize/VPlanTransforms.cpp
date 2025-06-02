@@ -2658,9 +2658,13 @@ void VPlanTransforms::convertToConcreteRecipes(VPlan &Plan,
 }
 
 void VPlanTransforms::handleUncountableEarlyExit(
-    VPBasicBlock *EarlyExitingVPBB, VPBasicBlock *EarlyExitVPBB, VPlan &Plan,
-    VPBasicBlock *HeaderVPBB, VPBasicBlock *LatchVPBB, VFRange &Range) {
+    VPBasicBlock *EarlyExitingVPBB, VPIRBasicBlock *EarlyExitVPBB, VPlan &Plan,
+    VPBasicBlock *HeaderVPBB, VPBasicBlock *LatchVPBB, VFRange &Range, DenseMap<const VPBlockBase *, BasicBlock *> &VPB2IRBB, SmallVector<VPValue *> &EarlyExitMaskCalculation) {
   using namespace llvm::VPlanPatternMatch;
+
+  errs() << "\n========== Pre Modification ============ \n";
+
+  Plan.print(errs());
 
   VPBlockBase *MiddleVPBB = LatchVPBB->getSuccessors()[0];
   if (!EarlyExitVPBB->getSinglePredecessor() &&
@@ -2675,21 +2679,35 @@ void VPlanTransforms::handleUncountableEarlyExit(
       cast<VPIRPhi>(&R)->swapOperands();
   }
 
-  VPBuilder Builder(LatchVPBB->getTerminator());
+  // ==== Find the successor if the branch condition is true ====
   VPBlockBase *TrueSucc = EarlyExitingVPBB->getSuccessors()[0];
+
+  // ==== Create a builder pointing at the exiting blocks terminator ====
+  VPBuilder Builder(LatchVPBB->getTerminator());
+
   assert(
       match(EarlyExitingVPBB->getTerminator(), m_BranchOnCond(m_VPValue())) &&
       "Terminator must be be BranchOnCond");
-  VPValue *CondOfEarlyExitingVPBB =
-      EarlyExitingVPBB->getTerminator()->getOperand(0);
+  
+  // ==== Find the condition on the exiting block terminator ====
+  VPValue *CondOfEarlyExitingVPBB = EarlyExitingVPBB->getTerminator()->getOperand(0);
+
+  // ==== Calculate the condition required to branch to the early exit block 
   auto *CondToEarlyExit = TrueSucc == EarlyExitVPBB
                               ? CondOfEarlyExitingVPBB
                               : Builder.createNot(CondOfEarlyExitingVPBB);
 
-  // Split the middle block and have it conditionally branch to the early exit
-  // block if CondToEarlyExit.
-  VPValue *IsEarlyExitTaken =
-      Builder.createNaryOp(VPInstruction::AnyOf, {CondToEarlyExit});
+  EarlyExitMaskCalculation.push_back(CondToEarlyExit);
+
+  // ==== Add a vector instruction in which if any lane is active return true ====
+  VPValue *IsEarlyExitTaken = Builder.createNaryOp(VPInstruction::AnyOf, {CondToEarlyExit});
+
+  // ==== Delete Original Early Exit Conditional Branch ====
+  auto* originalExitingCond = cast<VPInstruction>(EarlyExitingVPBB->getTerminator());
+  originalExitingCond->eraseFromParent();
+  
+  VPBlockUtils::disconnectBlocks(EarlyExitingVPBB, EarlyExitVPBB);
+
   VPBasicBlock *NewMiddle = Plan.createVPBasicBlock("middle.split");
   VPBasicBlock *VectorEarlyExitVPBB =
       Plan.createVPBasicBlock("vector.early.exit");
@@ -2699,7 +2717,6 @@ void VPlanTransforms::handleUncountableEarlyExit(
 
   VPBlockUtils::connectBlocks(VectorEarlyExitVPBB, EarlyExitVPBB);
 
-  // Update the exit phis in the early exit block.
   VPBuilder MiddleBuilder(NewMiddle);
   VPBuilder EarlyExitB(VectorEarlyExitVPBB);
   for (VPRecipeBase &R : EarlyExitVPBB->phis()) {
@@ -2746,6 +2763,11 @@ void VPlanTransforms::handleUncountableEarlyExit(
       Instruction::Or, {IsEarlyExitTaken, IsLatchExitTaken});
   Builder.createNaryOp(VPInstruction::BranchOnCond, AnyExitTaken);
   LatchExitingBranch->eraseFromParent();
+
+
+  errs() << "\n========== Post Modification ============ \n";
+
+  Plan.print(errs());
 }
 
 /// This function tries convert extended in-loop reductions to

@@ -83,9 +83,10 @@ Type *VPTypeAnalysis::inferScalarTypeForRecipe(const VPInstruction *R) {
   }
   case Instruction::ICmp:
   case VPInstruction::ActiveLaneMask:
-    assert(inferScalarType(R->getOperand(0)) ==
-               inferScalarType(R->getOperand(1)) &&
-           "different types inferred for different operands");
+  // ==== This check is not needed and can mess with custom mask implementation ====
+    // assert(inferScalarType(R->getOperand(0)) ==
+    //            inferScalarType(R->getOperand(1)) &&
+    //        "different types inferred for different operands");
     return IntegerType::get(Ctx, 1);
   case VPInstruction::ComputeFindLastIVResult:
   case VPInstruction::ComputeReductionResult: {

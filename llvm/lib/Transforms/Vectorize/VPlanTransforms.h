@@ -70,7 +70,7 @@ struct VPlanTransforms {
                                       bool RequiresScalarEpilogueCheck,
                                       bool TailFolded, Loop *TheLoop,
                                       DebugLoc IVDL, bool HasUncountableExit,
-                                      VFRange &Range);
+                                      VFRange &Range, DenseMap<const VPBlockBase *, BasicBlock *> &VPB2IRBB, SmallVector<VPValue *> &EarlyExitMaskCalculation);
 
   /// Replace loops in \p Plan's flat CFG with VPRegionBlocks, turning \p Plan's
   /// flat CFG into a hierarchical CFG.
@@ -181,10 +181,10 @@ struct VPlanTransforms {
   ///  * splitting the original middle block to branch to the early exit block
   ///    conditionally - according to the early exit condition.
   static void handleUncountableEarlyExit(VPBasicBlock *EarlyExitingVPBB,
-                                         VPBasicBlock *EarlyExitVPBB,
+                                         VPIRBasicBlock *EarlyExitVPBB,
                                          VPlan &Plan, VPBasicBlock *HeaderVPBB,
                                          VPBasicBlock *LatchVPBB,
-                                         VFRange &Range);
+                                         VFRange &Range, DenseMap<const VPBlockBase *, BasicBlock *> &VPB2IRBB, SmallVector<VPValue *> &EarlyExitMaskCalculation);
 
   /// Lower abstract recipes to concrete ones, that can be codegen'd. Use \p
   /// CanonicalIVTy as type for all un-typed live-ins in VPTypeAnalysis.
