@@ -491,7 +491,7 @@ void VPlanTransforms::prepareForVectorization(
                         cast<VPBasicBlock>(LatchVPB), InductionTy, IVDL);
 
   // ==== Modified To Handle More Than One Early Exit ==== 
-  // [[maybe_unused]] bool HandledUncountableEarlyExit = false;
+  [[maybe_unused]] bool HandledUncountableEarlyExit = false;
 
   // Disconnect all early exits from the loop leaving it with a single exit from
   // the latch. Early exits that are countable are left for a scalar epilog. The
@@ -505,8 +505,8 @@ void VPlanTransforms::prepareForVectorization(
         continue;
       if (HasUncountableEarlyExit) {
         // ==== Modified To Handle More Than One Early Exit ==== 
-        // assert(!HandledUncountableEarlyExit &&
-        //        "can handle exactly one uncountable early exit");
+        assert(!HandledUncountableEarlyExit &&
+               "can handle exactly one uncountable early exit");
         handleUncountableEarlyExit(cast<VPBasicBlock>(Pred), EB, Plan,
                                    cast<VPBasicBlock>(HeaderVPB),
                                    cast<VPBasicBlock>(LatchVPB),
@@ -514,7 +514,7 @@ void VPlanTransforms::prepareForVectorization(
                                    VPB2IRBB,
                                    EarlyExitMaskCalculation);
                                    
-        // HandledUncountableEarlyExit = true;
+        HandledUncountableEarlyExit = true;
       }
 
       // ==== No Longer disconnect ====

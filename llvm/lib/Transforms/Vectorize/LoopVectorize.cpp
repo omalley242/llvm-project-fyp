@@ -9298,64 +9298,62 @@ LoopVectorizationPlanner::tryToBuildVPlanWithVPRecipes(VFRange &Range,
     VPValue* LoopMask = RecipeBuilder.getBlockInMask(HeaderVPBB);
     
     for (unsigned i=0; i<EarlyExitMaskCalculation.size(); i++){
-      
+
       auto* maskCalc = EarlyExitMaskCalculation[i];
-      auto* earlyExitMaskCalculation = maskCalc->getDefiningRecipe();
-
-      // ==== Move Builder to where to place instrs (just after mask calc) ====
-      Builder.setInsertPoint(earlyExitMaskCalculation->getParent(), std::next(earlyExitMaskCalculation->getIterator()));
-
-      // ==== Generate new mask instruction obtaining safe lanes ====
       
-      // ==== not mask ====
-      auto* not_mask = Builder.createNot(maskCalc);
+      if (auto* earlyExitMaskCalculation = maskCalc->getDefiningRecipe()) {
 
-      // ==== Create Call to intrinsic to count leading zeros ====
-      VPInstruction *firstActiveLane = new VPInstruction(VPInstruction::FirstActiveLane, {not_mask}); 
-      Builder.insert(firstActiveLane);
-
-      // ==== generate step vector (based on return type) ====
-      auto* header = OrigLoop->getHeader();
-      Function* function = header->getParent();
-      LLVMContext &context = function->getContext();
-
-      Type *ScalarTy = Type::getInt1Ty(context);
+        // ==== Move Builder to where to place instrs (just after mask calc) ====
+        Builder.setInsertPoint(earlyExitMaskCalculation->getParent(), std::next(earlyExitMaskCalculation->getIterator()));
       
+        // ==== not mask ====
+        auto* not_mask = Builder.createNot(maskCalc);
 
-      DebugLoc DL = DebugLoc();
-      VPInstruction *StepVec = new VPInstructionWithType(VPInstructionWithType::StepVector, {}, ScalarTy, DL);
+        // ==== Create Call to intrinsic to count leading zeros ====
+        VPInstruction *firstActiveLane = new VPInstruction(VPInstruction::FirstActiveLane, {not_mask}); 
+        Builder.insert(firstActiveLane);
 
-      Builder.insert(StepVec);
+        // ==== generate step vector (based on return type) ====
+        auto* header = OrigLoop->getHeader();
+        Function* function = header->getParent();
+        LLVMContext &context = function->getContext();
+
+        Type *ScalarTy = Type::getInt1Ty(context);
+        
+
+        DebugLoc DL = DebugLoc();
+        VPInstruction *StepVec = new VPInstructionWithType(VPInstructionWithType::StepVector, {}, ScalarTy, DL);
+
+        Builder.insert(StepVec);
 
 
-      // ==== Comparison ====
-      auto* newmask = Builder.createICmp(CmpInst::ICMP_ULT, StepVec, firstActiveLane);
+        // ==== Comparison ====
+        auto* newmask = Builder.createICmp(CmpInst::ICMP_ULT, StepVec, firstActiveLane);
 
-      // ==== Replace old mask with the new reduced mask ====
-      bool StartReplacing = false;
-      VPRecipeBase* StartPoint = newmask->getDefiningRecipe();
+        // ==== Replace old mask with the new reduced mask ====
+        bool StartReplacing = false;
+        VPRecipeBase* StartPoint = newmask->getDefiningRecipe();
 
-      for (VPBasicBlock *VPBB : VPBlockUtils::blocksOnly<VPBasicBlock>(RPOT)) {
-        for (VPRecipeBase &Recipe : *VPBB) {
-          
-          // Check if we've reached the starting point
-          if (&Recipe == StartPoint) {
-            StartReplacing = true;
-            continue;
-          }
+        for (VPBasicBlock *VPBB : VPBlockUtils::blocksOnly<VPBasicBlock>(RPOT)) {
+          for (VPRecipeBase &Recipe : *VPBB) {
+            
+            // Check if we've reached the starting point
+            if (&Recipe == StartPoint) {
+              StartReplacing = true;
+              continue;
+            }
 
-          if (!StartReplacing)
-            continue;
+            if (!StartReplacing)
+              continue;
 
-          // Replace operands in the recipe that match OldValue
-          for (unsigned i = 0, e = Recipe.getNumOperands(); i != e; ++i) {
-            if (Recipe.getOperand(i) == LoopMask)
-              Recipe.setOperand(i, newmask);
+            // Replace operands in the recipe that match OldValue
+            for (unsigned i = 0, e = Recipe.getNumOperands(); i != e; ++i) {
+              if (Recipe.getOperand(i) == LoopMask)
+                Recipe.setOperand(i, newmask);
+            }
           }
         }
       }
-      
-
       // repeat for each early exit
     }
 

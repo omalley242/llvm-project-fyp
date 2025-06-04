@@ -2662,10 +2662,6 @@ void VPlanTransforms::handleUncountableEarlyExit(
     VPBasicBlock *HeaderVPBB, VPBasicBlock *LatchVPBB, VFRange &Range, DenseMap<const VPBlockBase *, BasicBlock *> &VPB2IRBB, SmallVector<VPValue *> &EarlyExitMaskCalculation) {
   using namespace llvm::VPlanPatternMatch;
 
-  errs() << "\n========== Pre Modification ============ \n";
-
-  Plan.print(errs());
-
   VPBlockBase *MiddleVPBB = LatchVPBB->getSuccessors()[0];
   if (!EarlyExitVPBB->getSinglePredecessor() &&
       EarlyExitVPBB->getPredecessors()[1] == MiddleVPBB) {
@@ -2764,10 +2760,6 @@ void VPlanTransforms::handleUncountableEarlyExit(
   Builder.createNaryOp(VPInstruction::BranchOnCond, AnyExitTaken);
   LatchExitingBranch->eraseFromParent();
 
-
-  errs() << "\n========== Post Modification ============ \n";
-
-  Plan.print(errs());
 }
 
 /// This function tries convert extended in-loop reductions to

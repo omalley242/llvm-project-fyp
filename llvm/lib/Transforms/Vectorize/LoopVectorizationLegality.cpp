@@ -1667,13 +1667,13 @@ bool LoopVectorizationLegality::isVectorizableEarlyExitLoop() {
       }
 
       // ==== Added Support For Multiple Exits ====
-      // if (SingleUncountableEdge) {
-      //   reportVectorizationFailure(
-      //       "Loop has too many uncountable exits",
-      //       "Cannot vectorize early exit loop with more than one early exit",
-      //       "TooManyUncountableEarlyExits", ORE, TheLoop);
-      //   return false;
-      // }
+      if (hasUncountableEarlyExit()) {
+        reportVectorizationFailure(
+            "Loop has too many uncountable exits",
+            "Cannot vectorize early exit loop with more than one early exit",
+            "TooManyUncountableEarlyExits", ORE, TheLoop);
+        return false;
+      }
       UncountableExitingEdges.push_back({BB, ExitBlock});
     } else
       CountableExitingBlocks.push_back(BB);
