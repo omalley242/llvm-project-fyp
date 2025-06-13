@@ -9306,11 +9306,8 @@ LoopVectorizationPlanner::tryToBuildVPlanWithVPRecipes(VFRange &Range,
         // ==== Move Builder to where to place instrs (just after mask calc) ====
         Builder.setInsertPoint(earlyExitMaskCalculation->getParent(), std::next(earlyExitMaskCalculation->getIterator()));
       
-        // ==== not mask ====
-        auto* not_mask = Builder.createNot(maskCalc);
-
         // ==== Create Call to intrinsic to count leading zeros ====
-        VPInstruction *firstActiveLane = new VPInstruction(VPInstruction::FirstActiveLane, {not_mask}); 
+        VPInstruction *firstActiveLane = new VPInstruction(VPInstruction::FirstActiveLane, {maskCalc}); 
         Builder.insert(firstActiveLane);
 
         // ==== generate step vector (based on return type) ====
